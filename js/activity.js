@@ -83,3 +83,142 @@ draw("all"); // initial draw
 // - on hover, highlight the hovered node and all directly connected nodes and links (incoming and outgoing)
 // - on unhover, return all nodes and links to their default state
 // update the tooltip to show the focus airport code and region, as well as number of incoming and outgoing routes
+
+function createChart(data) {
+    const width = 1600;
+    const radius = width / 2;
+    const innerRadius = radius - 200;
+
+    const tree = d3.cluster().size([2 * Math.PI, innerRadius]);
+
+    const root = tree(
+        bilink(
+            d3.hierarchy(data)
+                .sort((a, b) => d3.ascending(a.data.name, b.data.name))
+        )
+    );
+
+
+    const line = d3.lineRadial()
+        .curve(d3.curveBundle.beta(0.85))
+        .radius(d => d.y)
+        .angle(d => d.x);
+
+    const svg = d3.create("svg")
+        .attr("viewBox", [-width / 2, -width / 2, width, width])
+        .attr("width", width)
+        .attr("height", width)
+        .attr("style", "max-width: 100%; height: auto; font: 10px sans-serif;");
+
+    const tooltip = d3.select("body")
+        .selectAll(".airport-tooltip")
+        .data([null])
+        .join("div")
+        .attr("class", "airport-tooltip")
+        .style("position", "absolute")
+        .style("pointer-events", "none")
+        .style("background", "rgba(255,255,255,0.95)")
+        .style("border", "1px solid #999")
+        .style("border-radius", "4px")
+        .style("padding", "8px 10px")
+        .style("font", "12px sans-serif")
+        .style("line-height", "1.4")
+        .style("box-shadow", "0 2px 8px rgba(0,0,0,0.15)")
+        .style("display", "none");
+
+    const link = svg.append("g")
+        .attr("stroke", colornone)
+        .attr("fill", "none")
+        .selectAll("path")
+        .data(root.leaves().flatMap(leaf => leaf.outgoing))
+        .join("path")
+        .style("mix-blend-mode", "multiply")
+        .attr("d", ([i, o]) => line(i.path(o)));
+
+    const node = svg.append("g")
+        .selectAll("text")
+        .data(root.leaves())
+        .join("text")
+        .attr("font-size", 15)
+        .attr("dy", "0.31em")
+        .attr("transform", d => `
+            rotate(${d.x * 180 / Math.PI - 90})
+            translate(${d.y + 8},0)
+            ${d.x >= Math.PI ? "rotate(180)" : ""}
+        `)
+        .attr("text-anchor", d => d.x < Math.PI ? "start" : "end")
+        .text(d => d.data.name)
+        .attr("fill", "#555")
+        .style("cursor", "pointer")
+        .on("mouseover", overed)
+        .on("mousemove", moved)
+        .on("mouseout", outed);
+
+    function overed(event, d) {
+        const connectedNodes = new Set([d]);
+        const connectedLinks = new Set();
+
+        for (const route of d.outgoing) {
+            connectedNodes.add(route[1]);
+            connectedLinks.add(route);
+        }
+
+        for (const route of d.incoming) {
+            connectedNodes.add(route[0]);
+            connectedLinks.add(route);
+        }
+
+        node
+            .attr("fill", n => {
+                if (n === d) return "#000";
+                if (connectedNodes.has(n)) return "#d62728";
+                return "#bbb";
+            })
+            .attr("font-weight", n => n === d ? "700" : connectedNodes.has(n) ? "600" : null);
+
+        link
+            .attr("stroke", l => connectedLinks.has(l) ? (airlineColor[l[2]] || "#d62728") : colornone)
+            .attr("stroke-opacity", l => connectedLinks.has(l) ? 0.9 : 0.15)
+            .attr("stroke-width", l => connectedLinks.has(l) ? 2.5 : 1)
+            .filter(l => connectedLinks.has(l))
+            .raise();
+
+        const region = d.parent ? d.parent.data.name : "Unknown";
+        tooltip
+            .style("display", "block")
+            .html(`
+                <div><strong>Airport:</strong> ${d.data.name}</div>
+                <div><strong>Region:</strong> ${region}</div>
+                <div><strong>Incoming routes:</strong> ${d.incoming.length}</div>
+                <div><strong>Outgoing routes:</strong> ${d.outgoing.length}</div>
+            `);
+
+        moved(event);
+    }
+
+    function moved(event) {
+        tooltip
+            .style("left", `${event.pageX + 12}px`)
+            .style("top", `${event.pageY + 12}px`);
+    }
+
+    function outed() {
+        node
+            .attr("fill", "#555")
+            .attr("font-weight", null);
+
+        link
+            .attr("stroke", colornone)
+            .attr("stroke-opacity", 0.6)
+            .attr("stroke-width", 1);
+
+        tooltip.style("display", "none");
+    }
+
+    return svg.node();
+}
+
+function tree(data) {
+    return d3.cluster()
+        .size([2 * Math.PI, innerRadius])(data);
+}
